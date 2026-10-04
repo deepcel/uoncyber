@@ -71,3 +71,45 @@ class MFAChallenge(models.Model):
     used = models.BooleanField(
         default=False
     )
+
+class Profile(models.Model):
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='profile'
+    )
+
+    email_notifications = models.BooleanField(
+        default=True
+    )
+
+    def __str__(self):
+        return self.user.username
+
+class LoginAttempt(models.Model):
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+
+    ip_address = models.GenericIPAddressField()
+
+    successful = models.BooleanField(
+        default=False
+    )
+
+    failure_reason = models.CharField(
+        max_length=255,
+        blank=True
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    def __str__(self):
+        return self.ip_address

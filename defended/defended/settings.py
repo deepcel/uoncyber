@@ -43,6 +43,8 @@ INSTALLED_APPS = [
     'modules',
     'quizzes',
     'dashboard',
+    'notifications',
+    'audit_log',
     'allauth',
     'allauth.account',
     'allauth.mfa',
