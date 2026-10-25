@@ -113,3 +113,26 @@ class LoginAttempt(models.Model):
 
     def __str__(self):
         return self.ip_address
+
+class MFARecoveryCode(models.Model):
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='mfa_recovery_codes'
+    )
+
+    # SHA-256 of the code; the plain code is only shown to the user once.
+    code_hash = models.CharField(
+        max_length=64,
+        unique=True
+    )
+
+    used_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
