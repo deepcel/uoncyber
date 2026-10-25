@@ -10,6 +10,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Enrollment, Module, ModuleSchedule, Pathway, Section, SectionProgress
+from .permissions import (
+    check_can_author,
+    check_module_owner,
+    check_pathway_owner,
+    is_admin,
+    is_module_owner,
+)
 from .serializers import (
     EnrollmentSerializer,
     ModuleSerializer,
@@ -19,15 +26,17 @@ from .serializers import (
 )
 
 
-# Placeholder for "owns this module" until there is a real role system: is_staff stands in
-# for "module owner", is_superuser stands in for "admin, manages every module". Swap this
-# out once accounts.models.User has a real role field.
-def _check_module_owner(request, module):
-    if not request.user.is_staff:
-        raise PermissionDenied('Module owner access required.')
+def _visible_modules(user):
+    """Admins see everything, owners see their own plus published, learners see published."""
+    qs = Module.objects.all()
 
-    if not request.user.is_superuser and module.created_by_id != request.user.id:
-        raise PermissionDenied('You do not manage this module.')
+    if is_admin(user):
+        return qs
+
+    if is_module_owner(user):
+        return qs.filter(Q(created_by=user) | Q(status='PUBLISHED'))
+
+    return qs.filter(status='PUBLISHED')
 
 
 def _due_at_from_schedule(module):
@@ -45,29 +54,22 @@ class ModuleViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Module.objects.select_related('created_by').prefetch_related('sections')
-        user = self.request.user
-
-        if user.is_superuser:
-            return qs
-
-        if user.is_staff:
-            return qs.filter(Q(created_by=user) | Q(status='PUBLISHED'))
-
-        return qs.filter(status='PUBLISHED')
+        return (
+            _visible_modules(self.request.user)
+            .select_related('created_by')
+            .prefetch_related('sections')
+        )
 
     def perform_create(self, serializer):
-        if not self.request.user.is_staff:
-            raise PermissionDenied('Module owner access required.')
-
+        check_can_author(self.request.user)
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
-        _check_module_owner(self.request, serializer.instance)
+        check_module_owner(self.request.user, serializer.instance)
         serializer.save()
 
     def perform_destroy(self, instance):
-        _check_module_owner(self.request, instance)
+        check_module_owner(self.request.user, instance)
         instance.delete()
 
 
@@ -77,7 +79,11 @@ class SectionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Section.objects.select_related('module').order_by('order', 'id')
+        qs = (
+            Section.objects.select_related('module')
+            .filter(module__in=_visible_modules(self.request.user))
+            .order_by('order', 'id')
+        )
         module_id = self.request.query_params.get('module')
 
         if module_id:
@@ -86,15 +92,20 @@ class SectionViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        _check_module_owner(self.request, serializer.validated_data['module'])
+        check_module_owner(self.request.user, serializer.validated_data['module'])
         serializer.save()
 
     def perform_update(self, serializer):
-        _check_module_owner(self.request, serializer.instance.module)
+        check_module_owner(self.request.user, serializer.instance.module)
+
+        # Stop an owner moving a section into someone else's module.
+        if 'module' in serializer.validated_data:
+            check_module_owner(self.request.user, serializer.validated_data['module'])
+
         serializer.save()
 
     def perform_destroy(self, instance):
-        _check_module_owner(self.request, instance.module)
+        check_module_owner(self.request.user, instance.module)
         instance.delete()
 
 
@@ -104,7 +115,7 @@ class ModuleScheduleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
-        module = get_object_or_404(Module, pk=pk)
+        module = get_object_or_404(_visible_modules(request.user), pk=pk)
         schedule = ModuleSchedule.objects.filter(module=module).first()
 
         if schedule is None:
@@ -114,7 +125,7 @@ class ModuleScheduleView(APIView):
 
     def put(self, request, pk):
         module = get_object_or_404(Module, pk=pk)
-        _check_module_owner(request, module)
+        check_module_owner(request.user, module)
 
         schedule, _ = ModuleSchedule.objects.get_or_create(module=module)
 
@@ -134,35 +145,27 @@ class PathwayViewSet(viewsets.ModelViewSet):
         qs = Pathway.objects.select_related('owner').prefetch_related('pathwaymodule_set__module')
         user = self.request.user
 
-        if user.is_staff and not user.is_superuser:
+        if is_module_owner(user) and not is_admin(user):
             return qs.filter(owner=user)
 
         return qs
 
     def perform_create(self, serializer):
-        if not self.request.user.is_staff:
-            raise PermissionDenied('Module owner access required.')
-
+        check_can_author(self.request.user)
         serializer.save(owner=self.request.user)
 
     def perform_update(self, serializer):
-        self._check_owner(serializer.instance)
+        check_pathway_owner(self.request.user, serializer.instance)
         serializer.save()
 
     def perform_destroy(self, instance):
-        self._check_owner(instance)
+        check_pathway_owner(self.request.user, instance)
         instance.delete()
-
-    def _check_owner(self, pathway):
-        user = self.request.user
-
-        if not user.is_staff or (not user.is_superuser and pathway.owner_id != user.id):
-            raise PermissionDenied('You do not manage this pathway.')
 
     @action(detail=True, methods=['post'])
     def assign(self, request, pk=None):
         pathway = self.get_object()
-        self._check_owner(pathway)
+        check_pathway_owner(request.user, pathway)
 
         user_ids = request.data.get('user_ids', [])
         modules = Module.objects.filter(
@@ -196,7 +199,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
         if module_id:
             module = get_object_or_404(Module, pk=module_id)
-            _check_module_owner(self.request, module)
+            check_module_owner(self.request.user, module)
             return qs.filter(module=module)
 
         return qs.filter(user=self.request.user)
@@ -219,10 +222,23 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             due_at=serializer.validated_data.get('due_at') or _due_at_from_schedule(module)
         )
 
+    # Learners can't edit their own enrolment (due date, source, module) - only the module's owner can.
+    def perform_update(self, serializer):
+        check_module_owner(self.request.user, serializer.instance.module)
+
+        if 'module' in serializer.validated_data:
+            check_module_owner(self.request.user, serializer.validated_data['module'])
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        check_module_owner(self.request.user, instance.module)
+        instance.delete()
+
     @action(detail=False, methods=['post'])
     def assign(self, request):
         module = get_object_or_404(Module, pk=request.data.get('module'))
-        _check_module_owner(request, module)
+        check_module_owner(request.user, module)
 
         user_ids = request.data.get('user_ids', [])
         due_at = _due_at_from_schedule(module)
@@ -249,6 +265,9 @@ class SectionCompleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
-        section = get_object_or_404(Section, pk=pk)
+        section = get_object_or_404(
+            Section.objects.filter(module__in=_visible_modules(request.user)),
+            pk=pk
+        )
         SectionProgress.objects.get_or_create(user=request.user, section=section)
         return Response(status=status.HTTP_204_NO_CONTENT)
