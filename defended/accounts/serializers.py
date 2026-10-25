@@ -38,11 +38,49 @@ class LoginSerializer(serializers.Serializer):
     )
 
 
-class MFALoginSerializer(serializers.Serializer):
-
-    challenge_id = serializers.UUIDField()
+class SecondFactorSerializer(serializers.Serializer):
+    """Either a 6-digit authenticator code or a one-time recovery code."""
 
     otp = serializers.CharField(
         min_length=6,
-        max_length=6
+        max_length=6,
+        required=False
     )
+
+    recovery_code = serializers.CharField(
+        max_length=32,
+        required=False
+    )
+
+    def validate(self, attrs):
+        if bool(attrs.get("otp")) == bool(attrs.get("recovery_code")):
+            raise serializers.ValidationError(
+                "Provide either otp or recovery_code."
+            )
+
+        return attrs
+
+
+class MFALoginSerializer(SecondFactorSerializer):
+
+    challenge_id = serializers.UUIDField()
+
+
+class ConfirmIdentitySerializer(SecondFactorSerializer):
+
+    password = serializers.CharField(
+        write_only=True
+    )
+
+class UserSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "username",
+            "email",
+            "role",
+            "is_2fa_enabled",
+        ]
+        read_only_fields = fields
