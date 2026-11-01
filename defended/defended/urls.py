@@ -22,5 +22,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('accounts/', include('accounts.urls')),
     path('', include('modules.urls')),
+    path('', include('quizzes.urls')),
     path('api/token/refresh/', TokenRefreshView.as_view()),
 ]

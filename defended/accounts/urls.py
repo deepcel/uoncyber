@@ -8,6 +8,8 @@ from .views import (
     LoginView,
     MFALoginView,
     MeView,
+    UserListView,
+    UserDetailView,
     Disable2FAView,
     RegenerateRecoveryCodesView,
     AdminReset2FAView,
@@ -21,6 +23,10 @@ urlpatterns = [
     path("login/2fa/", MFALoginView.as_view(), name="login-2fa"),
 
     path("me/", MeView.as_view(), name="me"),
+
+    path("users/", UserListView.as_view(), name="user-list"),
+
+    path("users/<int:pk>/", UserDetailView.as_view(), name="user-detail"),
 
     path("2fa/setup/", Generate2FAView.as_view(), name="2fa-setup"),
 

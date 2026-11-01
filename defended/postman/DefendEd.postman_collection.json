@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "DefendEd API",
-    "description": "All routed endpoints of the DefendEd Django backend (accounts + modules).\n\n1. Start the server: `python manage.py runserver`.\n2. Run **Accounts > Register**, then **Login**. The access token is saved and sent as a Bearer token on every other request.\n3. New accounts have role USER. To test module authoring, set the role to OWNER or ADMIN in Django admin or `manage.py shell`, then log in again.\n4. Create requests save their ids (`module_id`, `section_id`, ...) for the requests after them.",
+    "description": "All routed endpoints of the DefendEd Django backend (accounts, modules, quizzes).\n\n1. Start the server: `python manage.py runserver`.\n2. Run **Accounts > Register**, then **Login**. The access token is saved and sent as a Bearer token on every other request.\n3. New accounts have role USER. To test module authoring, set the role to OWNER or ADMIN in Django admin or `manage.py shell`, then log in again.\n4. Create requests save their ids (`module_id`, `section_id`, ...) for the requests after them.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -46,6 +46,18 @@
     {
       "key": "learner_id",
       "value": ""
+    },
+    {
+      "key": "question_id",
+      "value": ""
+    },
+    {
+      "key": "attempt_id",
+      "value": ""
+    },
+    {
+      "key": "answers",
+      "value": "[]"
     },
     {
       "key": "access",
@@ -360,6 +372,81 @@
               ]
             },
             "description": "Current user's profile, including `role` (USER / OWNER / ADMIN). Read-only."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/users/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "users",
+                ""
+              ]
+            },
+            "description": "ADMIN only. Every user as `{id, username, email, role, is_2fa_enabled}`. 401 without a token, 403 for non-admins."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change user role",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/users/{{target_user_id}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "users",
+                "{{target_user_id}}",
+                ""
+              ]
+            },
+            "description": "ADMIN only. Set `target_user_id` first. `role` is USER, OWNER or ADMIN; `is_staff` and `is_superuser` are kept in sync. 400 for an invalid role or for demoting the last admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"OWNER\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "event": [
             {
@@ -1519,9 +1606,434 @@
       ]
     },
     {
+      "name": "Quizzes",
+      "description": "Question bank (owner/admin) and quiz attempts (learners). The learner must be enrolled in a PUBLISHED module.",
+      "item": [
+        {
+          "name": "List questions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/questions/?module={{module_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "questions",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "module",
+                  "value": "{{module_id}}"
+                }
+              ]
+            },
+            "description": "Owner of the module or ADMIN only. Includes the answer key."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create question - single choice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/questions/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "questions",
+                ""
+              ]
+            },
+            "description": "SINGLE needs exactly one correct choice; at least two choices. Saves `question_id`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"module\": \"{{module_id}}\",\n  \"text\": \"Which of these is a common sign of a phishing email?\",\n  \"question_type\": \"SINGLE\",\n  \"explanation\": \"Phishing emails often create urgency to rush you.\",\n  \"points\": 1,\n  \"order\": 1,\n  \"choices\": [\n    {\n      \"text\": \"An urgent request to act now\",\n      \"is_correct\": true,\n      \"order\": 1\n    },\n    {\n      \"text\": \"Correct spelling and grammar\",\n      \"is_correct\": false,\n      \"order\": 2\n    },\n    {\n      \"text\": \"A sender you email every day\",\n      \"is_correct\": false,\n      \"order\": 3\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "if (pm.response.code < 300) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.id !== undefined) pm.collectionVariables.set(\"question_id\", json.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create question - multiple choice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/questions/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "questions",
+                ""
+              ]
+            },
+            "description": "MULTIPLE needs at least one correct choice. Scoring is all-or-nothing per question.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"module\": \"{{module_id}}\",\n  \"text\": \"Which actions are safe with a suspicious email?\",\n  \"question_type\": \"MULTIPLE\",\n  \"explanation\": \"Report it and verify through a known channel.\",\n  \"points\": 2,\n  \"order\": 2,\n  \"choices\": [\n    {\n      \"text\": \"Report it to IT\",\n      \"is_correct\": true,\n      \"order\": 1\n    },\n    {\n      \"text\": \"Call the sender on a known number\",\n      \"is_correct\": true,\n      \"order\": 2\n    },\n    {\n      \"text\": \"Click the link to check\",\n      \"is_correct\": false,\n      \"order\": 3\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get question",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/questions/{{question_id}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "questions",
+                "{{question_id}}",
+                ""
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update question",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/questions/{{question_id}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "questions",
+                "{{question_id}}",
+                ""
+              ]
+            },
+            "description": "Send `choices` to replace them: include `id` to keep/edit a choice, omit it to add one; choices left out are deleted.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"points\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Start attempt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/attempts/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attempts",
+                ""
+              ]
+            },
+            "description": "Learner, enrolled in a PUBLISHED module. Returns the questions (no answer key) and `expires_at` if the module has a time limit. Calling again while one is in progress returns that attempt. Saves `attempt_id`, and builds a sample `answers` (first choice of each question) for Submit.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"module\": \"{{module_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "if (pm.response.code < 300) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.id !== undefined) pm.collectionVariables.set(\"attempt_id\", json.id);",
+                  "}",
+                  "if (pm.response.code < 300 && pm.response.json().questions) {",
+                  "  const answers = pm.response.json().questions.map(q => ({question: q.id, choices: [q.choices[0].id]}));",
+                  "  pm.collectionVariables.set('answers', JSON.stringify(answers));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get attempt",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/attempts/{{attempt_id}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attempts",
+                "{{attempt_id}}",
+                ""
+              ]
+            },
+            "description": "Questions while in progress; `results` (right/wrong + explanation per question) once submitted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit attempt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/attempts/{{attempt_id}}/submit/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attempts",
+                "{{attempt_id}}",
+                "submit",
+                ""
+              ]
+            },
+            "description": "Body: `{\"answers\": [{\"question\": <id>, \"choices\": [<choice id>, ...]}]}`. Unanswered questions score 0. Passing updates the enrolment's `last_passed_at` and next `due_at`. Submitting more than 30 seconds after `expires_at` is recorded as a fail.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answers\": {{answers}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "My attempts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/attempts/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attempts",
+                ""
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attempts for a module",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/attempts/?module={{module_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attempts",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "module",
+                  "value": "{{module_id}}"
+                }
+              ]
+            },
+            "description": "Owner of the module or ADMIN: every learner's attempts."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Cleanup",
       "description": "Run last. Deleting the module also deletes its sections and enrolments.",
       "item": [
+        {
+          "name": "Delete question",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/questions/{{question_id}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "questions",
+                "{{question_id}}",
+                ""
+              ]
+            },
+            "description": "If the question appears in past attempts it is deactivated instead, so results stay intact."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "Delete enrollment",
           "request": {
@@ -1629,6 +2141,37 @@
               ]
             },
             "description": "Owner of the module or ADMIN."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete user",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/users/{{target_user_id}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "users",
+                "{{target_user_id}}",
+                ""
+              ]
+            },
+            "description": "ADMIN only. Set `target_user_id` first. Returns 204. 400 if deleting yourself or the last admin."
           },
           "event": [
             {

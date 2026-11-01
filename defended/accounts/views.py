@@ -10,6 +10,7 @@ import qrcode
 
 from django.contrib.auth import authenticate
 from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -28,6 +29,7 @@ from .serializers import (
     MFALoginSerializer,
     ConfirmIdentitySerializer,
     UserSerializer,
+    UserRoleSerializer,
 )
 
 
@@ -122,6 +124,76 @@ class MeView(APIView):
         serializer = UserSerializer(request.user)
 
         return Response(serializer.data)
+
+
+def _is_last_admin(user):
+    """True if removing this user's admin rights would leave no admins at all."""
+    admins = User.objects.select_for_update().filter(
+        Q(role="ADMIN") | Q(is_superuser=True)
+    )
+
+    return not admins.exclude(pk=user.pk).exists()
+
+
+class UserListView(generics.ListAPIView):
+    queryset = User.objects.order_by("id")
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
+
+class UserDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminRole]
+
+    @transaction.atomic
+    def patch(self, request, pk):
+
+        user = get_object_or_404(User, pk=pk)
+
+        serializer = UserRoleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        role = serializer.validated_data["role"]
+
+        # Demoting the last admin locks everyone out just like deleting them would.
+        if role != "ADMIN" and _is_last_admin(user):
+            return Response(
+                {
+                    "message": "Cannot remove the last admin."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user.role = role
+        user.is_staff = role in ("OWNER", "ADMIN")
+        user.is_superuser = role == "ADMIN"
+        user.save(update_fields=["role", "is_staff", "is_superuser"])
+
+        return Response(UserSerializer(user).data)
+
+    @transaction.atomic
+    def delete(self, request, pk):
+
+        user = get_object_or_404(User, pk=pk)
+
+        if user.pk == request.user.pk:
+            return Response(
+                {
+                    "message": "You cannot delete your own account."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if _is_last_admin(user):
+            return Response(
+                {
+                    "message": "Cannot delete the last admin."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class Generate2FAView(APIView):

@@ -84,3 +84,10 @@ class UserSerializer(serializers.ModelSerializer):
             "is_2fa_enabled",
         ]
         read_only_fields = fields
+
+
+class UserRoleSerializer(serializers.Serializer):
+
+    role = serializers.ChoiceField(
+        choices=User.ROLE_CHOICES
+    )

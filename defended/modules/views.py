@@ -1,4 +1,6 @@
-from django.db.models import Q
+from datetime import timedelta
+
+from django.db.models import Count, F, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -18,11 +20,14 @@ from .permissions import (
     is_module_owner,
 )
 from .serializers import (
+    AssignModuleSerializer,
+    AssignUsersSerializer,
     EnrollmentSerializer,
     ModuleSerializer,
     PathwaySerializer,
     ScheduleSerializer,
     SectionSerializer,
+    parse_id,
 )
 
 
@@ -45,7 +50,7 @@ def _due_at_from_schedule(module):
     if schedule is None:
         return None
 
-    return timezone.now() + timezone.timedelta(days=schedule.initial_due_days)
+    return timezone.now() + timedelta(days=schedule.initial_due_days)
 
 
 class ModuleViewSet(viewsets.ModelViewSet):
@@ -87,7 +92,7 @@ class SectionViewSet(viewsets.ModelViewSet):
         module_id = self.request.query_params.get('module')
 
         if module_id:
-            qs = qs.filter(module_id=module_id)
+            qs = qs.filter(module_id=parse_id(module_id, 'module'))
 
         return qs
 
@@ -167,7 +172,10 @@ class PathwayViewSet(viewsets.ModelViewSet):
         pathway = self.get_object()
         check_pathway_owner(request.user, pathway)
 
-        user_ids = request.data.get('user_ids', [])
+        serializer = AssignUsersSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user_ids = serializer.validated_data['user_ids']
         modules = Module.objects.filter(
             id__in=pathway.pathwaymodule_set.values_list('module_id', flat=True)
         )
@@ -194,11 +202,20 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Enrollment.objects.select_related('user', 'module', 'pathway')
+        qs = Enrollment.objects.select_related(
+            'user', 'module__moduleschedule', 'pathway'
+        ).annotate(
+            sections_total=Count('module__sections', distinct=True),
+            sections_completed=Count(
+                'module__sections__sectionprogress',
+                filter=Q(module__sections__sectionprogress__user=F('user')),
+                distinct=True
+            ),
+        ).order_by('id')
         module_id = self.request.query_params.get('module')
 
         if module_id:
-            module = get_object_or_404(Module, pk=module_id)
+            module = get_object_or_404(Module, pk=parse_id(module_id, 'module'))
             check_module_owner(self.request.user, module)
             return qs.filter(module=module)
 
@@ -237,10 +254,13 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def assign(self, request):
-        module = get_object_or_404(Module, pk=request.data.get('module'))
+        serializer = AssignModuleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        module = get_object_or_404(Module, pk=serializer.validated_data['module'])
         check_module_owner(request.user, module)
 
-        user_ids = request.data.get('user_ids', [])
+        user_ids = serializer.validated_data['user_ids']
         due_at = _due_at_from_schedule(module)
 
         created = []

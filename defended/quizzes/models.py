@@ -83,6 +83,12 @@ class Attempt(models.Model):
         auto_now_add=True
     )
 
+    # Null when the module has no time limit.
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
     submitted_at = models.DateTimeField(
         null=True,
         blank=True
@@ -116,10 +122,13 @@ class AttemptAnswer(models.Model):
         on_delete=models.CASCADE
     )
 
-    selected_choice = models.ForeignKey(
+    # One row per question served, created when the attempt starts.
+    order = models.PositiveIntegerField(
+        default=1
+    )
+
+    selected_choices = models.ManyToManyField(
         Choice,
-        on_delete=models.CASCADE,
-        null=True,
         blank=True
     )
 
@@ -130,3 +139,7 @@ class AttemptAnswer(models.Model):
     points_awarded = models.IntegerField(
         default=0
     )
+
+    class Meta:
+        unique_together = ('attempt', 'question')
+        ordering = ['order']
