@@ -89,6 +89,13 @@ class Profile(models.Model):
 
 class LoginAttempt(models.Model):
 
+    # Lockouts are keyed on the username typed, so unknown usernames lock the same way real ones do.
+    username = models.CharField(
+        max_length=150,
+        blank=True,
+        db_index=True
+    )
+
     user = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,

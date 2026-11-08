@@ -38,10 +38,17 @@ class UserBriefSerializer(serializers.Serializer):
 
 class SectionSerializer(serializers.ModelSerializer):
 
+    # Whether the requesting user has marked this section complete. Set by SectionViewSet's
+    # annotation; null where sections are nested in a module (the annotation isn't there).
+    completed = serializers.SerializerMethodField()
+
     class Meta:
         model = Section
-        fields = ['id', 'module', 'title', 'body', 'order', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        fields = ['id', 'module', 'title', 'body', 'order', 'created_at', 'completed']
+        read_only_fields = ['id', 'created_at', 'completed']
+
+    def get_completed(self, obj):
+        return getattr(obj, 'completed', None)
 
 
 class ScheduleSerializer(serializers.ModelSerializer):

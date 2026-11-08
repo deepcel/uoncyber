@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from django.db.models import Count, F, Q
+from django.db.models import Count, Exists, F, OuterRef, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -10,6 +10,10 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from accounts.models import User
+from audit_log.utils import log_event
+from notifications.utils import notify_many
 
 from .models import Enrollment, Module, ModuleSchedule, Pathway, Section, SectionProgress
 from .permissions import (
@@ -67,7 +71,8 @@ class ModuleViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         check_can_author(self.request.user)
-        serializer.save(created_by=self.request.user)
+        module = serializer.save(created_by=self.request.user)
+        log_event(self.request, 'MODULE_CREATED', user=self.request.user, module_id=module.pk, title=module.title)
 
     def perform_update(self, serializer):
         check_module_owner(self.request.user, serializer.instance)
@@ -87,6 +92,9 @@ class SectionViewSet(viewsets.ModelViewSet):
         qs = (
             Section.objects.select_related('module')
             .filter(module__in=_visible_modules(self.request.user))
+            .annotate(completed=Exists(
+                SectionProgress.objects.filter(user=self.request.user, section=OuterRef('pk'))
+            ))
             .order_by('order', 'id')
         )
         module_id = self.request.query_params.get('module')
@@ -193,7 +201,29 @@ class PathwayViewSet(viewsets.ModelViewSet):
                 if is_new:
                     created.append(enrollment)
 
+        # One notification per newly enrolled learner, not one per module.
+        notify_many(
+            User.objects.filter(id__in={e.user_id for e in created}),
+            f'Assigned: {pathway.name}',
+            f'You have been assigned the "{pathway.name}" learning pathway.',
+            link=f'/pathways/{pathway.pk}'
+        )
+
         return Response({'enrolled': len(created)}, status=status.HTTP_201_CREATED)
+
+
+def enrollments_with_progress():
+    """Enrollments with the section counts EnrollmentSerializer.progress reads, in one query."""
+    return Enrollment.objects.select_related(
+        'user', 'module__moduleschedule', 'pathway'
+    ).annotate(
+        sections_total=Count('module__sections', distinct=True),
+        sections_completed=Count(
+            'module__sections__sectionprogress',
+            filter=Q(module__sections__sectionprogress__user=F('user')),
+            distinct=True
+        ),
+    )
 
 
 class EnrollmentViewSet(viewsets.ModelViewSet):
@@ -202,16 +232,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = Enrollment.objects.select_related(
-            'user', 'module__moduleschedule', 'pathway'
-        ).annotate(
-            sections_total=Count('module__sections', distinct=True),
-            sections_completed=Count(
-                'module__sections__sectionprogress',
-                filter=Q(module__sections__sectionprogress__user=F('user')),
-                distinct=True
-            ),
-        ).order_by('id')
+        qs = enrollments_with_progress().order_by('id')
         module_id = self.request.query_params.get('module')
 
         if module_id:
@@ -272,6 +293,14 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             )
             if is_new:
                 created.append(enrollment)
+
+        due_text = f' It is due by {due_at:%d %b %Y}.' if due_at else ''
+        notify_many(
+            User.objects.filter(id__in=[e.user_id for e in created]),
+            f'Assigned: {module.title}',
+            f'You have been assigned the "{module.title}" training module.{due_text}',
+            link=f'/modules/{module.pk}'
+        )
 
         return Response(
             EnrollmentSerializer(created, many=True).data,

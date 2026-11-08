@@ -325,7 +325,7 @@
                 ""
               ]
             },
-            "description": "Exchanges the refresh token for a new access token.",
+            "description": "Exchanges the refresh token for a new access token. Refresh tokens rotate: each call returns a new refresh token and the old one stops working.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"refresh\": \"{{refresh}}\"\n}",
@@ -349,7 +349,52 @@
                   "if (pm.response.code < 300) {",
                   "  const json = pm.response.json();",
                   "  if (json.access !== undefined) pm.collectionVariables.set(\"access\", json.access);",
+                  "  if (json.refresh !== undefined) pm.collectionVariables.set(\"refresh\", json.refresh);",
                   "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/logout/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "accounts",
+                "logout",
+                ""
+              ]
+            },
+            "description": "Blacklists the refresh token. Send {\"all\": true} instead to end every session for this user. The access token stays valid until it expires (5 minutes).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{refresh}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
                 ]
               }
             }

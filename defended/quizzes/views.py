@@ -3,22 +3,25 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Count, OuterRef, Q, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from rest_framework import mixins, status, viewsets
+from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from audit_log.models import AuditLog
+from audit_log.utils import log_event
 from modules.models import Enrollment, Module
-from modules.permissions import check_can_author, check_module_owner, is_admin
+from modules.permissions import check_can_author, check_module_owner, is_admin, is_module_owner
 from modules.serializers import parse_id
+from modules.views import enrollments_with_progress
 
 from .models import Attempt, AttemptAnswer, Question
-from .serializers import AttemptSerializer, QuestionSerializer, SubmitAttemptSerializer
+from .serializers import AttemptSerializer, GradebookSerializer, QuestionSerializer, SubmitAttemptSerializer
 
 
 # Submissions this long after expires_at are still accepted, to allow for network delay.
@@ -121,15 +124,24 @@ class AttemptViewSet(mixins.CreateModelMixin,
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        user = self.request.user
         qs = Attempt.objects.select_related('module', 'user').order_by('-started_at')
         module_id = self.request.query_params.get('module')
 
         if module_id and self.action == 'list':
             module = get_object_or_404(Module, pk=parse_id(module_id, 'module'))
-            check_module_owner(self.request.user, module)
+            check_module_owner(user, module)
             return qs.filter(module=module)
 
-        return qs.filter(user=self.request.user)
+        # Owners can open any single attempt in a module they manage (admins: any module), e.g.
+        # from the gradebook. Submitting still only ever works on your own attempt.
+        if self.action == 'retrieve':
+            if is_admin(user):
+                return qs
+            if is_module_owner(user):
+                return qs.filter(Q(user=user) | Q(module__created_by=user))
+
+        return qs.filter(user=user)
 
     def create(self, request, *args, **kwargs):
         module = get_object_or_404(
@@ -254,10 +266,9 @@ class AttemptViewSet(mixins.CreateModelMixin,
                     due_at=_next_due_at(attempt.module, now)
                 )
 
-                AuditLog.objects.create(
-                    user=request.user,
-                    action='QUIZ_PASSED',
-                    ip_address=request.META.get('REMOTE_ADDR', '0.0.0.0')
+                log_event(
+                    request, 'QUIZ_PASSED', user=request.user,
+                    module_id=attempt.module_id, attempt_id=attempt.pk, score_percent=str(score)
                 )
 
         data = self.get_serializer(attempt).data
@@ -266,3 +277,48 @@ class AttemptViewSet(mixins.CreateModelMixin,
             data['message'] = 'Time limit exceeded. The attempt was recorded as a fail.'
 
         return Response(data)
+
+
+class GradebookView(generics.ListAPIView):
+    """
+    GET /gradebook/              every learner enrolled in a module I manage (admins: every module)
+    GET /gradebook/?module=<id>  just one module
+
+    One row per enrollment: compliance status and section progress (as in /enrollments/), plus a
+    summary of the learner's submitted quiz attempts. latest_attempt_id opens via /attempts/<id>/.
+    """
+
+    serializer_class = GradebookSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        check_can_author(user)
+
+        qs = enrollments_with_progress()
+
+        if not is_admin(user):
+            qs = qs.filter(module__created_by=user)
+
+        module_id = self.request.query_params.get('module')
+        if module_id:
+            module = get_object_or_404(Module, pk=parse_id(module_id, 'module'))
+            check_module_owner(user, module)
+            qs = qs.filter(module=module)
+
+        submitted = Attempt.objects.filter(
+            user=OuterRef('user'), module=OuterRef('module'), submitted_at__isnull=False
+        )
+        latest = submitted.order_by('-submitted_at', '-id')
+
+        return qs.annotate(
+            attempts_count=Coalesce(
+                Subquery(submitted.order_by().values('user').annotate(n=Count('id')).values('n')[:1]),
+                Value(0)
+            ),
+            best_score=Subquery(submitted.order_by('-score_percent').values('score_percent')[:1]),
+            latest_attempt_id=Subquery(latest.values('id')[:1]),
+            latest_score=Subquery(latest.values('score_percent')[:1]),
+            latest_passed=Subquery(latest.values('passed')[:1]),
+            latest_submitted_at=Subquery(latest.values('submitted_at')[:1]),
+        ).order_by('module__title', 'user__username')

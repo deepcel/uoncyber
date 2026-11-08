@@ -6,6 +6,7 @@ from .views import (
     GenerateQRCodeView,
     Verify2FAView,
     LoginView,
+    LogoutView,
     MFALoginView,
     MeView,
     UserListView,
@@ -21,6 +22,8 @@ urlpatterns = [
     path("login/", LoginView.as_view(), name="login"),
 
     path("login/2fa/", MFALoginView.as_view(), name="login-2fa"),
+
+    path("logout/", LogoutView.as_view(), name="logout"),
 
     path("me/", MeView.as_view(), name="me"),
 

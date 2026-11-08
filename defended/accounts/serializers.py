@@ -1,6 +1,11 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
+
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 
 
 User = get_user_model()
@@ -17,6 +22,18 @@ class RegisterSerializer(serializers.ModelSerializer):
             "email",
             "password"
         ]
+
+    def validate(self, attrs):
+        # create_user() doesn't run AUTH_PASSWORD_VALIDATORS, so do it here. The unsaved user lets
+        # UserAttributeSimilarityValidator reject passwords close to the username or email.
+        candidate = User(username=attrs["username"], email=attrs["email"])
+
+        try:
+            validate_password(attrs["password"], user=candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"password": list(exc.messages)})
+
+        return attrs
 
     def create(self, validated_data):
 
@@ -84,6 +101,39 @@ class UserSerializer(serializers.ModelSerializer):
             "is_2fa_enabled",
         ]
         read_only_fields = fields
+
+
+class SafeTokenRefreshSerializer(TokenRefreshSerializer):
+    """simplejwt looks the user up with .get(), so a deleted user's refresh token would 500."""
+
+    def validate(self, attrs):
+        try:
+            return super().validate(attrs)
+        except User.DoesNotExist:
+            raise AuthenticationFailed(
+                "No active account found for the given token.",
+                "no_active_account"
+            )
+
+
+class LogoutSerializer(serializers.Serializer):
+
+    refresh = serializers.CharField(
+        required=False
+    )
+
+    # End every session for this user, not just the one holding this refresh token.
+    all = serializers.BooleanField(
+        default=False
+    )
+
+    def validate(self, attrs):
+        if not attrs["all"] and not attrs.get("refresh"):
+            raise serializers.ValidationError(
+                "Provide refresh, or set all to true."
+            )
+
+        return attrs
 
 
 class UserRoleSerializer(serializers.Serializer):

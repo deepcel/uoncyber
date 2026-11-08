@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+from datetime import timedelta
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -39,6 +40,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'accounts',
     'modules',
     'quizzes',
@@ -155,6 +157,28 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    # Per-IP limits on the auth endpoints (per-user once authenticated).
+    # Throttle counters live in the cache: use a shared cache (e.g. Redis) when running more than one process.
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '10/min',
+        'mfa': '10/min',
+        'register': '10/hour',
+        'confirm_identity': '10/hour',
+    },
 }
+
+SIMPLE_JWT = {
+    # Short-lived access tokens: revoking a session (logout, admin 2FA reset) blacklists the
+    # refresh token, but an access token already issued stays valid until it expires.
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'TOKEN_REFRESH_SERIALIZER': 'accounts.serializers.SafeTokenRefreshSerializer',
+}
+
+# Account lockout: this many failed password/2FA attempts within the window blocks further tries.
+LOGIN_LOCKOUT_THRESHOLD = 5
+LOGIN_LOCKOUT_WINDOW = timedelta(minutes=15)
 
 AUTH_USER_MODEL = 'accounts.User'

@@ -2,6 +2,8 @@ from django.db import transaction
 
 from rest_framework import serializers
 
+from modules.serializers import EnrollmentSerializer
+
 from .models import Attempt, AttemptAnswer, Choice, Question
 
 
@@ -208,3 +210,30 @@ class AnswerInputSerializer(serializers.Serializer):
 class SubmitAttemptSerializer(serializers.Serializer):
 
     answers = AnswerInputSerializer(many=True)
+
+
+class GradebookSerializer(EnrollmentSerializer):
+    """An enrollment plus a summary of the learner's submitted attempts (from GradebookView's annotations)."""
+
+    attempts_count = serializers.IntegerField(read_only=True)
+
+    best_score = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+
+    latest_score = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+
+    latest_passed = serializers.BooleanField(read_only=True, allow_null=True)
+
+    latest_attempt_id = serializers.IntegerField(read_only=True)
+
+    latest_submitted_at = serializers.DateTimeField(read_only=True)
+
+    class Meta(EnrollmentSerializer.Meta):
+        fields = EnrollmentSerializer.Meta.fields + [
+            'attempts_count',
+            'best_score',
+            'latest_score',
+            'latest_passed',
+            'latest_attempt_id',
+            'latest_submitted_at',
+        ]
+        read_only_fields = fields
